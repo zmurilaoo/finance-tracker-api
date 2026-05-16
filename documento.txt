@@ -1,0 +1,270 @@
+# Finance Tracker API
+
+API de controle financeiro pessoal e empresarial. Permite o registro de lançamentos de **receitas** e **despesas**, classificação por **categoria** e consulta de **resumos consolidados** (saldo, totais por período, totais por tipo).
+
+Construída para servir como backend de dashboards web e mobile.
+
+---
+
+## 📌 Sumário
+
+- [Visão geral](#-visão-geral)
+- [Stack técnica](#-stack-técnica)
+- [Arquitetura](#-arquitetura)
+- [Estrutura de pacotes](#-estrutura-de-pacotes)
+- [Modelo de domínio](#-modelo-de-domínio)
+- [Endpoints planejados](#-endpoints-planejados)
+- [Decisões técnicas](#-decisões-técnicas)
+- [Como executar localmente](#-como-executar-localmente)
+- [Roadmap](#-roadmap)
+- [Autor](#-autor)
+
+---
+
+## 🎯 Visão geral
+
+O **Finance Tracker** é uma API REST que permite:
+
+- Cadastrar lançamentos financeiros classificados como **receita** ou **despesa**.
+- Consultar lançamentos com filtros (por tipo, por período, por categoria).
+- Calcular **saldo consolidado** e **totais agrupados**.
+- Servir um front-end (React, Vue ou mobile) por meio de contratos JSON.
+
+O projeto foi pensado para evoluir em etapas, partindo de um CRUD simples e crescendo até cobrir autenticação, testes, cache e mensageria.
+
+---
+
+## 🛠️ Stack técnica
+
+| Camada | Tecnologia |
+|---|---|
+| Linguagem | Java 21 |
+| Framework | Spring Boot 3.3.x |
+| Persistência | Spring Data JPA + Hibernate |
+| Banco (dev) | H2 (em memória) |
+| Banco (produção) | PostgreSQL |
+| Validação | Bean Validation (Jakarta) |
+| Build | Maven |
+| Boilerplate | Lombok |
+| Testes (próxima fase) | JUnit 5, Mockito, Testcontainers |
+| Segurança (próxima fase) | Spring Security 6 + JWT |
+| Cache (futura fase) | Redis |
+| Documentação | Springdoc OpenAPI (Swagger UI) |
+
+---
+
+## 🏗️ Arquitetura
+
+A aplicação segue **arquitetura em camadas (Layered Architecture)**, com responsabilidades bem separadas:
+
+```
+┌─────────────────────────────────────────────────┐
+│  Cliente HTTP (Front-end, Postman, Insomnia)    │
+└────────────────────┬────────────────────────────┘
+                     │ JSON via HTTP
+                     ▼
+┌─────────────────────────────────────────────────┐
+│  Controller — recebe requisição, devolve HTTP   │
+└────────────────────┬────────────────────────────┘
+                     │ DTO
+                     ▼
+┌─────────────────────────────────────────────────┐
+│  Service — regras de negócio                    │
+└────────────────────┬────────────────────────────┘
+                     │ Entity
+                     ▼
+┌─────────────────────────────────────────────────┐
+│  Repository (Spring Data JPA)                   │
+└────────────────────┬────────────────────────────┘
+                     │ chamadas JPA
+                     ▼
+┌─────────────────────────────────────────────────┐
+│  Hibernate — gera SQL e envia via JDBC          │
+└────────────────────┬────────────────────────────┘
+                     │ SQL
+                     ▼
+┌─────────────────────────────────────────────────┐
+│  Banco de dados (H2 em dev, Postgres em prod)   │
+└─────────────────────────────────────────────────┘
+```
+
+**Regra de ouro:** cada camada conversa **apenas com a camada imediatamente abaixo**.
+Controller **nunca** chama Repository diretamente. Service **nunca** recebe HTTP.
+
+---
+
+## 📁 Estrutura de pacotes
+
+```
+br.com.zmurilaoo.finance
+├── controller        # Endpoints REST (entrada HTTP)
+├── service           # Regras de negócio
+├── repository        # Interfaces JpaRepository
+├── model             # Entities JPA (tabelas do banco)
+├── dto               # Objetos de entrada e saída da API
+└── exception         # Exceções customizadas e handlers globais
+```
+
+**Por que essa separação importa:**
+- **Manutenção:** alterar uma camada não obriga alterar as outras.
+- **Testabilidade:** cada camada pode ser testada de forma isolada.
+- **Clareza de propósito:** qualquer dev que abrir o projeto entende a navegação.
+- **Padrão de mercado:** é o que se espera em empresas que usam Spring.
+
+---
+
+## 🗄️ Modelo de domínio
+
+### Entidade `Lancamento`
+
+| Campo | Tipo | Restrições |
+|---|---|---|
+| `id` | `Long` | PK, auto-gerado |
+| `descricao` | `String` | obrigatório, máx. 100 caracteres |
+| `valor` | `BigDecimal` | obrigatório, precisão 12 e escala 2 |
+| `data` | `LocalDate` | obrigatório |
+| `tipo` | `enum TipoLancamento` | obrigatório, `RECEITA` ou `DESPESA` |
+
+### Enum `TipoLancamento`
+
+- `RECEITA` — entrada de dinheiro
+- `DESPESA` — saída de dinheiro
+
+> Persistido como **String no banco** (`@Enumerated(EnumType.STRING)`) para evitar quebra em caso de reordenação do enum.
+
+---
+
+## 🔌 Endpoints planejados
+
+> Prefixo base: `/api/v1`
+
+| Método | Rota | Descrição |
+|---|---|---|
+| `POST` | `/lancamentos` | Cria um novo lançamento |
+| `GET` | `/lancamentos` | Lista todos os lançamentos |
+| `GET` | `/lancamentos/{id}` | Busca lançamento por ID |
+| `GET` | `/lancamentos/tipo/{tipo}` | Lista lançamentos por tipo |
+| `GET` | `/lancamentos/periodo?inicio=&fim=` | Lista lançamentos em um intervalo de datas |
+| `PUT` | `/lancamentos/{id}` | Atualiza um lançamento |
+| `DELETE` | `/lancamentos/{id}` | Remove um lançamento |
+| `GET` | `/lancamentos/resumo` | Retorna saldo, total de receitas e total de despesas |
+
+### Exemplo de payload (POST `/lancamentos`)
+
+```json
+{
+  "descricao": "Venda iPhone 14 Pro Max",
+  "valor": 7899.00,
+  "data": "2026-05-15",
+  "tipo": "RECEITA"
+}
+```
+
+### Exemplo de resposta (`200 OK`)
+
+```json
+{
+  "id": 42,
+  "descricao": "Venda iPhone 14 Pro Max",
+  "valor": 7899.00,
+  "data": "2026-05-15",
+  "tipo": "RECEITA"
+}
+```
+
+---
+
+## 🧠 Decisões técnicas
+
+Cada decisão abaixo foi tomada **deliberadamente**, com fundamento:
+
+| Decisão | Justificativa |
+|---|---|
+| `Long` como tipo da PK | `Integer` estoura em sistemas grandes (~2 bilhões). `BIGINT` é o padrão em produção. |
+| `BigDecimal` para valores monetários | `double` e `float` têm erro de ponto flutuante (IEEE 754). Inaceitável em sistema financeiro. |
+| `LocalDate` em vez de `java.util.Date` | `java.time` (Java 8+) é imutável, separa data/hora, sem ambiguidade de timezone. |
+| `@Enumerated(EnumType.STRING)` | `ORDINAL` salva o índice numérico, quebrando o banco em reordenações. `STRING` é estável. |
+| Sem `@Data` da Lombok em Entities | `@Data` gera `equals`/`hashCode` com todos os campos, o que quebra o contrato JPA em coleções. |
+| `equals`/`hashCode` baseados só no `id` | Garante consistência do contrato em `HashSet`, `HashMap` etc. mesmo após persistir. |
+| DTO separado de Entity | Entity não deve ser exposta diretamente: vaza modelo interno, abre risco de segurança e acoplamento. |
+
+---
+
+## ▶️ Como executar localmente
+
+### Pré-requisitos
+
+- Java 21 instalado (`java -version`)
+- Maven 3.9+ (ou usar `./mvnw` que já vem no projeto)
+
+### Passos
+
+```bash
+# Clonar o repositório
+git clone https://github.com/zmurilaoo/finance-tracker.git
+cd finance-tracker
+
+# Rodar a aplicação
+./mvnw spring-boot:run
+```
+
+A aplicação sobe em `http://localhost:8080`.
+
+### Console do banco H2
+
+Disponível em `http://localhost:8080/h2-console`.
+
+**Configurações padrão:**
+- JDBC URL: `jdbc:h2:mem:finance`
+- User: `sa`
+- Password: *(em branco)*
+
+---
+
+## 🗺️ Roadmap
+
+### ✅ Fase 1 — Fundação (atual)
+- [x] Setup do projeto com Spring Boot 3
+- [x] Entity `Lancamento` com boas práticas
+- [x] Repository com Query Methods
+- [ ] Service com regras de negócio
+- [ ] Controller REST com CRUD completo
+- [ ] Validações com Bean Validation
+- [ ] Tratamento global de exceções (`@RestControllerAdvice`)
+
+### 🔜 Fase 2 — Qualidade
+- [ ] Testes unitários com JUnit 5 + Mockito
+- [ ] Testes de integração com Testcontainers (PostgreSQL real)
+- [ ] Cobertura mínima de 80% no Service
+- [ ] Documentação automática com Swagger/OpenAPI
+
+### 🔜 Fase 3 — Segurança
+- [ ] Spring Security 6 com configuração lambda
+- [ ] Autenticação via JWT
+- [ ] Cadastro e login de usuário
+- [ ] Cada usuário enxerga apenas seus lançamentos
+
+### 🔜 Fase 4 — Performance e Produção
+- [ ] Migrar de H2 para PostgreSQL
+- [ ] Migrations versionadas com Flyway
+- [ ] Cache de consultas frequentes com Redis
+- [ ] Dockerfile + docker-compose (app + Postgres + Redis)
+
+### 🔮 Fase 5 — Avançado
+- [ ] Mensageria com RabbitMQ (notificações de lançamentos)
+- [ ] Observabilidade com Actuator + Prometheus
+- [ ] Deploy em ambiente cloud
+
+---
+
+## 👤 Autor
+
+**Murilo Braz** — desenvolvedor em formação focado em backend Java + Spring.
+
+- GitHub: [@zmurilaoo](https://github.com/zmurilaoo)
+
+---
+
+## 📜 Licença
+
+Projeto pessoal de estudo e portfólio. Uso livre para fins educacionais.
